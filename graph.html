@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EcoFinds</title>
+    <!-- React & Babel -->
+    <script src="https://unpkg.com/react@17/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+      import {
+        getAuth,
+        createUserWithEmailAndPassword,
+        signInWithEmailAndPassword,
+        onAuthStateChanged,
+        signOut,
+        GoogleAuthProvider,
+        signInWithPopup,
+      } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js";
+      import {
+        getFirestore,
+        collection,
+        addDoc,
+        getDocs,
+        query,
+        where,
+        doc,
+        deleteDoc,
+        serverTimestamp,
+      } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js";
+
+      // ⚠️ Replace with your Firebase config
+      const firebaseConfig = {
+        apiKey: "AIzaSyB6CQDYdqt18j5qJr3MWgHVwYTBSrkclxo",
+        authDomain: "ecofinds-67cb8.firebaseapp.com",
+        projectId: "ecofinds-67cb8",
+        storageBucket: "ecofinds-67cb8.firebasestorage.app",
+        messagingSenderId: "929734148723",
+        appId: "1:929734148723:web:c2fcef4a671cba571a6006"
+    };
+
+      // Initialize Firebase
+      const app = initializeApp(firebaseConfig);
+      window.auth = getAuth(app);
+      window.db = getFirestore(app);
+      window.GoogleAuthProvider = GoogleAuthProvider;
+      window.signInWithPopup = signInWithPopup;
+      window.signOut = signOut;
+      window.createUserWithEmailAndPassword = createUserWithEmailAndPassword;
+      window.signInWithEmailAndPassword = signInWithEmailAndPassword;
+      window.onAuthStateChanged = onAuthStateChanged;
+      window.addDoc = addDoc;
+      window.getDocs = getDocs;
+      window.collection = collection;
+      window.query = query;
+      window.where = where;
+      window.doc = doc;
+      window.deleteDoc = deleteDoc;
+      window.serverTimestamp = serverTimestamp;
+    </script>
+  </head>
+  <body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const { useState, useEffect } = React;
+
+      function App() {
+        const [user, setUser] = useState(null);
+        const [currentScreen, setCurrentScreen] = useState("login");
+        const [products, setProducts] = useState([]);
+        const [cart, setCart] = useState([]);
+        const [purchases, setPurchases] = useState([]);
+        const [tab, setTab] = useState("products"); // products | cart | purchases
+
+        // 🔹 Auth: Login
+        const handleLogin = (email, password) => {
+          window
+            .signInWithEmailAndPassword(window.auth, email, password)
+            .then((userCredential) => {
+              const u = userCredential.user;
+              setUser({
+                id: u.uid,
+                username: u.email.split("@")[0],
+                email: u.email,
+              });
+              setCurrentScreen("home");
+            })
+            .catch((error) => alert(error.message));
+        };
+
+        // 🔹 Auth: Signup
+        const handleSignup = (email, password, username) => {
+          window
+            .createUserWithEmailAndPassword(window.auth, email, password)
+            .then((userCredential) => {
+              const u = userCredential.user;
+              setUser({ id: u.uid, username, email: u.email });
+              setCurrentScreen("home");
+            })
+            .catch((error) => alert(error.message));
+        };
+
+        // 🔹 Google Login
+        const handleGoogleLogin = () => {
+          const provider = new window.GoogleAuthProvider();
+          window
+            .signInWithPopup(window.auth, provider)
+            .then((result) => {
+              const u = result.user;
+              setUser({
+                id: u.uid,
+                username: u.displayName || u.email.split("@")[0],
+                email: u.email,
+              });
+              setCurrentScreen("home");
+            })
+            .catch((error) => alert(error.message));
+        };
+
+        // 🔹 Fetch products
+        const fetchProducts = async () => {
+          const querySnapshot = await window.getDocs(
+            window.collection(window.db, "products")
+          );
+          const data = querySnapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }));
+          setProducts(data);
+        };
+
+        // 🔹 Add product
+        const addProduct = async (name, price) => {
+          if (!user) return;
+          await window.addDoc(window.collection(window.db, "products"), {
+            name,
+            price,
+            userId: user.id,
+          });
+          fetchProducts();
+        };
+
+        // 🔹 Add to cart
+        const addToCart = async (product) => {
+          if (!user) return;
+          await window.addDoc(window.collection(window.db, "cart"), {
+            ...product,
+            userId: user.id,
+          });
+          fetchCart();
+        };
+
+        // 🔹 Fetch cart
+        const fetchCart = async () => {
+          if (!user) return;
+          const q = window.query(
+            window.collection(window.db, "cart"),
+            window.where("userId", "==", user.id)
+          );
+          const querySnapshot = await window.getDocs(q);
+          const data = querySnapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }));
+          setCart(data);
+        };
+
+        // 🔹 Remove from cart
+        const removeFromCart = async (id) => {
+          await window.deleteDoc(window.doc(window.db, "cart", id));
+          fetchCart();
+        };
+
+        // 🔹 Checkout (move cart → purchases)
+        const checkout = async () => {
+          if (!user || cart.length === 0) return;
+          for (let item of cart) {
+            await window.addDoc(window.collection(window.db, "purchases"), {
+              ...item,
+              userId: user.id,
+              purchasedAt: window.serverTimestamp(),
+            });
+            await window.deleteDoc(window.doc(window.db, "cart", item.id));
+          }
+          fetchCart();
+          fetchPurchases();
+          alert("Purchase successful 🎉");
+        };
+
+        // 🔹 Fetch purchases
+        const fetchPurchases = async () => {
+          if (!user) return;
+          const q = window.query(
+            window.collection(window.db, "purchases"),
+            window.where("userId", "==", user.id)
+          );
+          const querySnapshot = await window.getDocs(q);
+          const data = querySnapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }));
+          setPurchases(data);
+        };
+
+        // 🔹 Track login state
+        useEffect(() => {
+          const unsubscribe = window.onAuthStateChanged(
+            window.auth,
+            (firebaseUser) => {
+              if (firebaseUser) {
+                setUser({
+                  id: firebaseUser.uid,
+                  username:
+                    firebaseUser.displayName ||
+                    firebaseUser.email.split("@")[0],
+                  email: firebaseUser.email,
+                });
+                setCurrentScreen("home");
+                fetchProducts();
+                fetchCart();
+                fetchPurchases();
+              } else {
+                setUser(null);
+                setCurrentScreen("login");
+              }
+            }
+          );
+          return () => unsubscribe();
+        }, []);
+
+        // Screens
+        return (
+          <div className="flex items-center justify-center h-screen">
+            {currentScreen === "login" && (
+              <LoginScreen
+                onLogin={handleLogin}
+                onSignupClick={() => setCurrentScreen("signup")}
+                onGoogleLogin={handleGoogleLogin}
+              />
+            )}
+            {currentScreen === "signup" && (
+              <SignupScreen
+                onSignup={handleSignup}
+                onLoginClick={() => setCurrentScreen("login")}
+              />
+            )}
+            {currentScreen === "home" && user && (
+              <DashboardScreen
+                user={user}
+                products={products}
+                cart={cart}
+                purchases={purchases}
+                onAddProduct={addProduct}
+                onAddToCart={addToCart}
+                onRemoveFromCart={removeFromCart}
+                onCheckout={checkout}
+                tab={tab}
+                setTab={setTab}
+              />
+            )}
+          </div>
+        );
+      }
+
+      // Login Screen
+      function LoginScreen({ onLogin, onSignupClick, onGoogleLogin }) {
+        const [email, setEmail] = useState("");
+        const [password, setPassword] = useState("");
+
+        return (
+          <div className="bg-white shadow-lg rounded-lg p-6 w-96">
+            <h2 className="text-2xl font-bold mb-4 text-center">Login</h2>
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full p-2 border rounded mb-3"
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full p-2 border rounded mb-3"
+            />
+            <button
+              onClick={() => onLogin(email, password)}
+              className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 mb-2"
+            >
+              Login
+            </button>
+            <button
+              onClick={onGoogleLogin}
+              className="w-full bg-red-500 text-white p-2 rounded hover:bg-red-600 mb-2"
+            >
+              Login with Google
+            </button>
+            <p className="text-sm text-center">
+              Don’t have an account?{" "}
+              <span
+                onClick={onSignupClick}
+                className="text-blue-500 cursor-pointer"
+              >
+                Sign up
+              </span>
+            </p>
+          </div>
+        );
+      }
+
+      // Signup Screen
+      function SignupScreen({ onSignup, onLoginClick }) {
+        const [email, setEmail] = useState("");
+        const [password, setPassword] = useState("");
+        const [username, setUsername] = useState("");
+
+        return (
+          <div className="bg-white shadow-lg rounded-lg p-6 w-96">
+            <h2 className="text-2xl font-bold mb-4 text-center">Sign Up</h2>
+            <input
+              type="text"
+              placeholder="Username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full p-2 border rounded mb-3"
+            />
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full p-2 border rounded mb-3"
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full p-2 border rounded mb-3"
+            />
+            <button
+              onClick={() => onSignup(email, password, username)}
+              className="w-full bg-green-500 text-white p-2 rounded hover:bg-green-600 mb-2"
+            >
+              Sign Up
+            </button>
+            <p className="text-sm text-center">
+              Already have an account?{" "}
+              <span
+                onClick={onLoginClick}
+                className="text-blue-500 cursor-pointer"
+              >
+                Login
+              </span>
+            </p>
+          </div>
+        );
+      }
+
+      // Dashboard
+      function DashboardScreen({
+        user,
+        products,
+        cart,
+        purchases,
+        onAddProduct,
+        onAddToCart,
+        onRemoveFromCart,
+        onCheckout,
+        tab,
+        setTab,
+      }) {
+        const [productName, setProductName] = useState("");
+        const [productPrice, setProductPrice] = useState("");
+
+        return (
+          <div className="bg-white shadow-lg rounded-lg p-6 w-full max-w-3xl">
+            <h2 className="text-xl font-bold mb-4">
+              Welcome, {user.username} 👋
+            </h2>
+
+            {/* Tabs */}
+            <div className="flex gap-4 mb-6">
+              <button
+                onClick={() => setTab("products")}
+                className={`px-3 py-1 rounded ${
+                  tab === "products" ? "bg-blue-500 text-white" : "bg-gray-200"
+                }`}
+              >
+                Products
+              </button>
+              <button
+                onClick={() => setTab("cart")}
+                className={`px-3 py-1 rounded ${
+                  tab === "cart" ? "bg-blue-500 text-white" : "bg-gray-200"
+                }`}
+              >
+                Cart
+              </button>
+              <button
+                onClick={() => setTab("purchases")}
+                className={`px-3 py-1 rounded ${
+                  tab === "purchases" ? "bg-blue-500 text-white" : "bg-gray-200"
+                }`}
+              >
+                Purchases
+              </button>
+            </div>
+
+            {/* Products Tab */}
+            {tab === "products" && (
+              <>
+                {/* Add Product */}
+                <div className="mb-6">
+                  <h3 className="text-lg font-bold mb-2">Add Product</h3>
+                  <input
+                    type="text"
+                    placeholder="Product Name"
+                    value={productName}
+                    onChange={(e) => setProductName(e.target.value)}
+                    className="p-2 border rounded mr-2"
+                  />
+                  <input
+                    type="number"
+                    placeholder="Price"
+                    value={productPrice}
+                    onChange={(e) => setProductPrice(e.target.value)}
+                    className="p-2 border rounded mr-2"
+                  />
+                  <button
+                    onClick={() => {
+                      onAddProduct(productName, Number(productPrice));
+                      setProductName("");
+                      setProductPrice("");
+                    }}
+                    className="bg-green-500 text-white p-2 rounded hover:bg-green-600"
+                  >
+                    Add
+                  </button>
+                </div>
+
+                {/* Product List */}
+                <h3 className="text-lg font-bold mb-2">Products</h3>
+                <ul className="mb-6">
+                  {products.map((p) => (
+                    <li
+                      key={p.id}
+                      className="flex justify-between items-center border-b py-2"
+                    >
+                      {p.name} - ₹{p.price}
+                      <button
+                        onClick={() => onAddToCart(p)}
+                        className="bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600"
+                      >
+                        Add to Cart
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {/* Cart Tab */}
+            {tab === "cart" && (
+              <>
+                <h3 className="text-lg font-bold mb-2">Your Cart</h3>
+                <ul className="mb-6">
+                  {cart.map((c) => (
+                    <li
+                      key={c.id}
+                      className="flex justify-between items-center border-b py-2"
+                    >
+                      {c.name} - ₹{c.price}
+                      <button
+                        onClick={() => onRemoveFromCart(c.id)}
+                        className="bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {cart.length > 0 && (
+                  <button
+                    onClick={onCheckout}
+                    className="w-full bg-green-500 text-white p-2 rounded hover:bg-green-600"
+                  >
+                    Checkout
+                  </button>
+                )}
+              </>
+            )}
+
+            {/* Purchases Tab */}
+            {tab === "purchases" && (
+              <>
+                <h3 className="text-lg font-bold mb-2">Your Purchases</h3>
+                <ul>
+                  {purchases.map((p) => (
+                    <li
+                      key={p.id}
+                      className="flex justify-between items-center border-b py-2"
+                    >
+                      {p.name} - ₹{p.price}{" "}
+                      <span className="text-sm text-gray-500">
+                        ({p.purchasedAt?.toDate
+                          ? p.purchasedAt.toDate().toLocaleString()
+                          : "recently"})
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            {/* Logout */}
+            <button
+              onClick={() => window.signOut(window.auth)}
+              className="w-full bg-red-600 text-white p-2 rounded hover:bg-red-700 mt-6"
+            >
+              Logout
+            </button>
+          </div>
+        );
+      }
+
+      ReactDOM.render(<App />, document.getElementById("root"));
+    </script>
+  </body>
+</html>
